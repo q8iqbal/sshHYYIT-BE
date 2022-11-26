@@ -5,7 +5,10 @@ import (
 	"backend-log-api/models"
 	"backend-log-api/responses"
 	"context"
+	"encoding/json"
+	"io/ioutil"
 
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +21,41 @@ import (
 
 var logCollection *mongo.Collection = configs.GetCollection(configs.DB, "logs")
 var validate = validator.New()
+
+var (
+	address  string
+	err      error
+	geo      models.GeoIP
+	response *http.Response
+	body     []byte
+)
+
+func GetGeoIP(ip_address string) (string, string, string) {
+
+	ip := fmt.Sprintf("&ip=%s", ip_address)
+	fields := "&fields=state_prov,district,country_name"
+
+	response, err = http.Get(configs.EnvGeolocationBaseUrl() + configs.EnvGeolocationKey() + ip + fields)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer response.Body.Close()
+
+	// response.Body() is a reader type. We have
+	// to use ioutil.ReadAll() to read the data
+	// in to a byte slice(string)
+	body, err = ioutil.ReadAll(response.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Unmarshal the JSON byte slice to a GeoIP struct
+	err = json.Unmarshal(body, &geo)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return geo.District, geo.State_Prov, geo.Country_name
+}
 
 func PostLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -37,13 +75,19 @@ func PostLog() gin.HandlerFunc {
 			return
 		}
 
+		district, state_prov, country_name := GetGeoIP(log.Ip_Guest)
+
 		newLog := models.Log{
-			Id:        primitive.NewObjectID(),
-			Username:  log.Username,
-			Status:    log.Status,
-			State:     log.State,
-			City:      log.City,
-			Timestamp: log.Timestamp,
+			Id:           primitive.NewObjectID(),
+			Ip_Server:    log.Ip_Server,
+			Hostname:     log.Hostname,
+			Ip_Guest:     log.Ip_Guest,
+			Username:     log.Username,
+			Timestamp:    log.Timestamp,
+			District:     district,
+			State_Prov:   state_prov,
+			Country_name: country_name,
+			Status:       log.Status,
 		}
 
 		result, err := logCollection.InsertOne(ctx, newLog)
@@ -57,22 +101,39 @@ func PostLog() gin.HandlerFunc {
 	}
 }
 
-func GetALog() gin.HandlerFunc {
+func GetConnected() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		logId := c.Param("logId")
-		var log models.Log
 		defer cancel()
 
-		objId, _ := primitive.ObjectIDFromHex(logId)
+		filter := bson.D{{Key: "status", Value: bson.D{{Key: "$eq", Value: "connected"}}}}
 
-		err := logCollection.FindOne(ctx, bson.M{"id": objId}).Decode(&log)
+		count, err := logCollection.CountDocuments(ctx, filter)
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
 			return
 		}
 
-		c.JSON(http.StatusOK, responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": log}})
+		c.JSON(http.StatusOK, responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"count": count}})
+	}
+}
+
+func GetFailed() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		filter := bson.D{{Key: "status", Value: bson.D{{Key: "$eq", Value: "failed"}}}}
+
+		count, err := logCollection.CountDocuments(ctx, filter)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			return
+		}
+
+		c.JSON(http.StatusOK, responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"count": count}})
 	}
 }
 
@@ -105,3 +166,22 @@ func GetAllLog() gin.HandlerFunc {
 		)
 	}
 }
+
+// func GetALog() gin.HandlerFunc {
+// 	return func(c *gin.Context) {
+// 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// 		logId := c.Param("logId")
+// 		var log models.Log
+// 		defer cancel()
+
+// 		objId, _ := primitive.ObjectIDFromHex(logId)
+
+// 		err := logCollection.FindOne(ctx, bson.M{"id": objId}).Decode(&log)
+// 		if err != nil {
+// 			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+// 			return
+// 		}
+
+// 		c.JSON(http.StatusOK, responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": log}})
+// 	}
+// }

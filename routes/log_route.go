@@ -8,6 +8,8 @@ import (
 
 func LogRoutes(router *gin.Engine) {
 	router.POST("/log", controllers.PostLog())
-	router.GET("/log/:logId", controllers.GetALog())
-	router.GET("/logs", controllers.GetAllLog())
+	router.GET("/log", controllers.GetAllLog())
+	router.GET("/count/connected", controllers.GetConnected())
+	router.GET("/count/failed", controllers.GetFailed())
+	// router.GET("/log/:logId", controllers.GetALog())
 }
