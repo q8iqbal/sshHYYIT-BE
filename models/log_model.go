@@ -31,3 +31,8 @@ type CurrentUser struct {
 	Ip_Guest  string `json:"ip_guest,omitempty" validate:"required"`  // ip dari client yang berusaha connect
 	Timestamp string `json:"timestamp,omitempty" validate:"required"` // tanggal waktu log
 }
+
+type LoginUser struct {
+	Username string `json:"username,omitempty" validate:"required"`
+	Password string `json:"password,omitempty" validate:"required"` // ip dari client yang berusaha connect
+}

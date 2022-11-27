@@ -17,9 +17,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var logCollection *mongo.Collection = configs.GetCollection(configs.DB, "logs")
+var statusCollection *mongo.Collection = configs.GetCollection(configs.DB, "status")
 var userCollection *mongo.Collection = configs.GetCollection(configs.DB, "user")
 var validate = validator.New()
 
@@ -30,6 +32,16 @@ var (
 	response *http.Response
 	body     []byte
 )
+
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
 
 func GetGeoIP(ip_address string) (string, string, string) {
 
@@ -56,6 +68,52 @@ func GetGeoIP(ip_address string) (string, string, string) {
 		fmt.Println(err)
 	}
 	return geo.District, geo.State_Prov, geo.Country_name
+}
+func PostLogin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var user models.LoginUser
+		var dbUser models.LoginUser
+		defer cancel()
+
+		//validate the request body
+		if err := c.BindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, responses.LogResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			return
+		}
+
+		//use the validator library to validate required fields
+		if validationErr := validate.Struct(&user); validationErr != nil {
+			c.JSON(http.StatusBadRequest, responses.LogResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": validationErr.Error()}})
+			return
+		}
+
+		count, errror := userCollection.EstimatedDocumentCount(ctx)
+		if errror != nil {
+			panic(errror)
+		}
+
+		if count < 1 {
+			password := "admin"
+			hash, _ := HashPassword(password)
+			credentials := bson.D{{Key: "username", Value: "admin"}, {Key: "password", Value: hash}}
+			userCollection.InsertOne(ctx, credentials)
+		}
+
+		err := userCollection.FindOne(ctx, bson.M{"username": user.Username}).Decode(&dbUser)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responses.LoginResponse{Message: "failed"})
+			return
+		}
+		userPass := user.Password
+		dbPass := dbUser.Password
+		passErr := CheckPasswordHash(userPass, dbPass)
+		if passErr == false {
+			c.JSON(http.StatusInternalServerError, responses.LoginResponse{Message: "wrong password"})
+			return
+		}
+		c.JSON(http.StatusOK, responses.LoginResponse{Message: "success"})
+	}
 }
 
 func PostLog() gin.HandlerFunc {
@@ -203,7 +261,7 @@ func PostCurrentUser() gin.HandlerFunc {
 
 			filter := bson.D{{Key: "ip_server", Value: currentServer.Ip_Server}}
 
-			result, err := userCollection.UpdateOne(ctx, filter, bson.M{"$set": newServer})
+			result, err := statusCollection.UpdateOne(ctx, filter, bson.M{"$set": newServer})
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
 				return
@@ -212,7 +270,7 @@ func PostCurrentUser() gin.HandlerFunc {
 			c.JSON(http.StatusCreated, responses.LogResponse{Status: http.StatusCreated, Message: "success", Data: map[string]interface{}{"data": result}})
 		} else {
 
-			result, err := userCollection.InsertOne(ctx, newServer)
+			result, err := statusCollection.InsertOne(ctx, newServer)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
 				return
@@ -231,7 +289,7 @@ func GetAllCurrentUser() gin.HandlerFunc {
 		var servers []models.CurrentServer
 		defer cancel()
 
-		results, err := userCollection.Find(ctx, bson.M{})
+		results, err := statusCollection.Find(ctx, bson.M{})
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
