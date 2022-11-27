@@ -11,5 +11,6 @@ func LogRoutes(router *gin.Engine) {
 	router.GET("/log", controllers.GetAllLog())
 	router.GET("/count/connected", controllers.GetConnected())
 	router.GET("/count/failed", controllers.GetFailed())
-	// router.GET("/log/:logId", controllers.GetALog())
+	router.POST("/connected-user", controllers.PostCurrentUser())
+	router.GET("/connected-user", controllers.GetAllCurrentUser())
 }

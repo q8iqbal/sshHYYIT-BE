@@ -20,6 +20,7 @@ import (
 )
 
 var logCollection *mongo.Collection = configs.GetCollection(configs.DB, "logs")
+var userCollection *mongo.Collection = configs.GetCollection(configs.DB, "user")
 var validate = validator.New()
 
 var (
@@ -78,16 +79,16 @@ func PostLog() gin.HandlerFunc {
 		district, state_prov, country_name := GetGeoIP(log.Ip_Guest)
 
 		newLog := models.Log{
-			Id:           primitive.NewObjectID(),
-			Ip_Server:    log.Ip_Server,
-			Hostname:     log.Hostname,
-			Ip_Guest:     log.Ip_Guest,
-			Username:     log.Username,
-			Timestamp:    log.Timestamp,
-			District:     district,
-			State_Prov:   state_prov,
-			Country_name: country_name,
-			Status:       log.Status,
+			Id:        primitive.NewObjectID(),
+			Ip_Server: log.Ip_Server,
+			Hostname:  log.Hostname,
+			Ip_Guest:  log.Ip_Guest,
+			Username:  log.Username,
+			Timestamp: log.Timestamp,
+			District:  district,
+			State:     state_prov,
+			Country:   country_name,
+			Status:    log.Status,
 		}
 
 		result, err := logCollection.InsertOne(ctx, newLog)
@@ -162,26 +163,94 @@ func GetAllLog() gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK,
-			responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": logs}},
+			responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"array": logs}},
 		)
 	}
 }
 
-// func GetALog() gin.HandlerFunc {
-// 	return func(c *gin.Context) {
-// 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-// 		logId := c.Param("logId")
-// 		var log models.Log
-// 		defer cancel()
+func PostCurrentUser() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var currentServer models.CurrentServer
+		defer cancel()
 
-// 		objId, _ := primitive.ObjectIDFromHex(logId)
+		//validate the request body
+		if err := c.BindJSON(&currentServer); err != nil {
+			c.JSON(http.StatusBadRequest, responses.LogResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			return
+		}
 
-// 		err := logCollection.FindOne(ctx, bson.M{"id": objId}).Decode(&log)
-// 		if err != nil {
-// 			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-// 			return
-// 		}
+		//use the validator library to validate required fields
+		if validationErr := validate.Struct(&currentServer); validationErr != nil {
+			c.JSON(http.StatusBadRequest, responses.LogResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": validationErr.Error()}})
+			return
+		}
 
-// 		c.JSON(http.StatusOK, responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": log}})
-// 	}
-// }
+		newServer := models.CurrentServer{}
+
+		newServer.Ip_Server = currentServer.Ip_Server
+		newServer.Hostname = currentServer.Hostname
+		newServer.Users = currentServer.Users
+
+		filter := bson.D{{Key: "ip_server", Value: bson.D{{Key: "$eq", Value: currentServer.Ip_Server}}}}
+
+		count, err := logCollection.CountDocuments(ctx, filter)
+		fmt.Println("TESTING :", count)
+		if err != nil {
+			panic(err)
+		}
+		if count >= 1 {
+
+			filter := bson.D{{Key: "ip_server", Value: currentServer.Ip_Server}}
+
+			result, err := userCollection.UpdateOne(ctx, filter, bson.M{"$set": newServer})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+				return
+			}
+
+			c.JSON(http.StatusCreated, responses.LogResponse{Status: http.StatusCreated, Message: "success", Data: map[string]interface{}{"data": result}})
+		} else {
+
+			result, err := userCollection.InsertOne(ctx, newServer)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+				return
+			}
+
+			c.JSON(http.StatusCreated, responses.LogResponse{Status: http.StatusCreated, Message: "success", Data: map[string]interface{}{"data": result}})
+
+		}
+
+	}
+}
+
+func GetAllCurrentUser() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var servers []models.CurrentServer
+		defer cancel()
+
+		results, err := userCollection.Find(ctx, bson.M{})
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			return
+		}
+
+		//reading from the db in an optimal way
+		defer results.Close(ctx)
+		for results.Next(ctx) {
+			var singleServer models.CurrentServer
+			if err = results.Decode(&singleServer); err != nil {
+				c.JSON(http.StatusInternalServerError, responses.LogResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			}
+
+			servers = append(servers, singleServer)
+		}
+
+		c.JSON(http.StatusOK,
+			responses.LogResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"array": servers}},
+		)
+	}
+}
