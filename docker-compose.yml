@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  tes:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGOURI=mongodb://admin:password@mongo-service:27017/admin
+  mongo-service:
+    image: mongo
+    ports:
+      - "27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
